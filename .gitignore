@@ -1,0 +1,31 @@
+# ---------- Build outputs (MDK-ARM) ----------
+*.o
+*.axf
+*.hex
+*.map
+*.crf
+*.d
+*.dep
+*.lnp
+*.sct
+*.htm
+*.build_log.htm
+*.uvguix.*
+
+# ---------- WorkBuddy project data (not source) ----------
+.workbuddy/
+
+# ---------- OS / editor junk ----------
+Thumbs.db
+.DS_Store
+ehthumbs.db
+Desktop.ini
+
+# ---------- Vendored reference material (not project code) ----------
+3，ALIENTEK精英STM32F103开发板原理图/
+7，硬件资料/
+9，增值资料/
+STM32F1 EMWIN开发手册_V2.0/
+STM32F1 FreeRTOS开发手册_V1.1/
+STM32F1 LWIP开发手册(ENC28J60版)_V1.2/
+STM32F1 UCOS开发手册_V2.0/
