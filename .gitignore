@@ -11,6 +11,8 @@
 *.htm
 *.build_log.htm
 *.uvguix.*
+build_log.txt
+MDK-ARM/sensor/
 
 # ---------- WorkBuddy project data (not source) ----------
 .workbuddy/

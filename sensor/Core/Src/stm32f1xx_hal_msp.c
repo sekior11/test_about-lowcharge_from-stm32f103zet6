@@ -81,63 +81,7 @@ void HAL_MspInit(void)
 }
 
 /* USER CODE BEGIN 1 */
-void HAL_UART_MspInit(UART_HandleTypeDef *huart)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-  if (huart->Instance == USART1)
-  {
-    __HAL_RCC_USART1_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-
-    GPIO_InitStruct.Pin = GPIO_PIN_9;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = GPIO_PIN_10;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    HAL_NVIC_SetPriority(USART1_IRQn, 1U, 0U);
-    HAL_NVIC_EnableIRQ(USART1_IRQn);
-  }
-  else if (huart->Instance == USART3)
-  {
-    __HAL_RCC_USART3_CLK_ENABLE();
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-
-    GPIO_InitStruct.Pin = GPIO_PIN_10;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = GPIO_PIN_11;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    __HAL_RCC_DMA1_CLK_ENABLE();
-    hdma_usart3_rx.Instance = DMA1_Channel3;
-    hdma_usart3_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
-    hdma_usart3_rx.Init.PeriphInc = DMA_PINC_DISABLE;
-    hdma_usart3_rx.Init.MemInc = DMA_MINC_ENABLE;
-    hdma_usart3_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-    hdma_usart3_rx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-    hdma_usart3_rx.Init.Mode = DMA_CIRCULAR;
-    hdma_usart3_rx.Init.Priority = DMA_PRIORITY_VERY_HIGH;
-    if (HAL_DMA_Init(&hdma_usart3_rx) != HAL_OK)
-    {
-      Error_Handler();
-    }
-    __HAL_LINKDMA(huart, hdmarx, hdma_usart3_rx);
-
-    HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 1U, 0U);
-    HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
-    HAL_NVIC_SetPriority(USART3_IRQn, 1U, 0U);
-    HAL_NVIC_EnableIRQ(USART3_IRQn);
-  }
-}
-
+/* 说明：HAL_UART_MspInit / MspDeInit 已由 CubeMX 生成到 usart.c 中，
+   旧版此处手写的 HAL_UART_MspInit（含 USART3 RX DMA Circular 配置）已删除，
+   DMA Circular/VERY_HIGH 配置已同步到 usart.c 的生成代码中。 */
 /* USER CODE END 1 */
