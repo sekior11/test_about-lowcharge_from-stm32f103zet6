@@ -92,8 +92,25 @@ int main(void)
   MX_DMA_Init();
   MX_USART1_UART_Init();
   MX_USART3_UART_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   SensorApp_Init();
+
+  /* 功耗优化: 释放 JTAG(保留 SWD 调试), 将 PA15/PB3/PB4 设为模拟输入降低漏电 */
+  __HAL_RCC_AFIO_CLK_ENABLE();
+  __HAL_AFIO_REMAP_SWJ_NOJTAG();
+  {
+    GPIO_InitTypeDef gp = {0};
+    gp.Mode = GPIO_MODE_ANALOG;
+    gp.Pull = GPIO_NOPULL;
+    gp.Pin = GPIO_PIN_15;                 /* PA15 (JTAG JTDI) */
+    HAL_GPIO_Init(GPIOA, &gp);
+    gp.Pin = GPIO_PIN_3 | GPIO_PIN_4;     /* PB3(JTDO), PB4(JNTRST) */
+    HAL_GPIO_Init(GPIOB, &gp);
+  }
+
+  /* 调试自检: 上电先发一条固定串, 确认程序已进入 main 循环且 USART1 输出链路正常 */
+  (void)HAL_UART_Transmit(&huart1, (uint8_t *)"BOOT OK\r\n", 9U, 100U);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -104,6 +121,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     SensorApp_Process();
+    __WFI();    /* 进入休眠, 由 1ms SysTick / USART / DMA 中断唤醒, 空闲期间 CPU 停转省电 */
   }
   /* USER CODE END 3 */
 }

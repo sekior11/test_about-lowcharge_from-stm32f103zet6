@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "main.h"
 #include "usart.h"
+#include "fa66.h"
 
 #define SENSOR_APP_REPORT_PERIOD_MS       200U
 #define SENSOR_APP_REPORT_BUFFER_SIZE     256U
@@ -16,6 +17,14 @@ static uint32_t s_last_iwt603_tick;
 static volatile uint32_t s_iwt603_rx_bytes;
 static volatile uint32_t s_iwt603_uart_errors;
 static uint32_t s_iwt603_valid_updates;
+
+/* FA66 报警会话状态机: 超阈值->继电器吸合->FA66 上电->读毛重; 滞回->断电 */
+static FA66_Data_t s_fa66_data;
+static uint8_t s_fa66_relay_on;       /* 继电器(FA66 电源)是否吸合 */
+static uint32_t s_fa66_relay_on_tick; /* 继电器闭合时刻 */
+static uint8_t s_fa66_stabilized;     /* FA66 是否已稳定可读取 */
+static uint32_t s_fa66_last_read_tick;
+static uint32_t s_alarm_low_since;    /* 阈值低于起算时刻(滞回) */
 
 static float SensorApp_Abs(float value)//绝对值
 {
@@ -72,6 +81,71 @@ void SensorApp_Init(void)//初始化传感器应用
   SensorApp_StartIwt603Dma();
 }
 
+/* FA66 报警会话控制: 阈值超限 -> 继电器吸合(PB5 高) -> FA66 上电;
+   上电稳定后周期读取双通道毛重并经 USART1 上报; 阈值持续低于后滞回断电。
+   仅在报警会话期间开启 USART2 时钟, 会话结束关闭以省电。 */
+static void SensorApp_ControlFa66(uint8_t alarm_active)
+{
+  uint32_t now = HAL_GetTick();
+
+  if (alarm_active != 0U)
+  {
+    s_alarm_low_since = 0U;
+    if (s_fa66_relay_on == 0U)
+    {
+      HAL_GPIO_WritePin(ALARM_OUT_GPIO_Port, ALARM_OUT_Pin, GPIO_PIN_SET);
+      s_fa66_relay_on = 1U;
+      s_fa66_relay_on_tick = now;
+      s_fa66_stabilized = 0U;
+      s_fa66_last_read_tick = now;
+      __HAL_RCC_USART2_CLK_ENABLE();      /* 仅在会话期间开启 FA66 串口时钟 */
+    }
+
+    if (s_fa66_stabilized == 0U)
+    {
+      if ((now - s_fa66_relay_on_tick) >= FA66_POWER_STABILIZE_MS)
+      {
+        s_fa66_stabilized = 1U;
+      }
+    }
+    else if ((now - s_fa66_last_read_tick) >= FA66_READ_PERIOD_MS)
+    {
+      s_fa66_last_read_tick = now;
+      if (FA66_ReadGrossWeights(&huart2, RS485_DE_GPIO_Port, RS485_DE_Pin,
+                                &s_fa66_data) == MODBUS_RTU_OK)
+      {
+        char fa66_buf[64];
+        int len = snprintf(fa66_buf, sizeof(fa66_buf),
+                           "FA66,%ld,%ld\r\n",
+                           (long)s_fa66_data.gross_weight[0],
+                           (long)s_fa66_data.gross_weight[1]);
+        if ((len > 0) && ((size_t)len < sizeof(fa66_buf)))
+        {
+          (void)HAL_UART_Transmit(&huart1, (uint8_t *)fa66_buf,
+                                  (uint16_t)len, 100U);
+        }
+      }
+    }
+  }
+  else
+  {
+    if (s_fa66_relay_on != 0U)
+    {
+      if (s_alarm_low_since == 0U)
+      {
+        s_alarm_low_since = now;
+      }
+      if ((now - s_alarm_low_since) >= FA66_ALARM_CLEAR_HOLD_MS)
+      {
+        HAL_GPIO_WritePin(ALARM_OUT_GPIO_Port, ALARM_OUT_Pin, GPIO_PIN_RESET);
+        s_fa66_relay_on = 0U;
+        s_fa66_stabilized = 0U;
+        __HAL_RCC_USART2_CLK_DISABLE();   /* 关闭 FA66 串口时钟省电 */
+      }
+    }
+  }
+}
+
 void SensorApp_Process(void)
 {
   IWT603_Data_t latest;
@@ -102,11 +176,10 @@ void SensorApp_Process(void)
         (s_sensor_data.attitude.acc_g[2] * s_sensor_data.attitude.acc_g[2]));
     acc_deviation = SensorApp_Abs(acc_magnitude - 1.0f);
     status = (acc_magnitude > IWT603_ALARM_THRESHOLD_G) ? 1U : 0U;
-    HAL_GPIO_WritePin(ALARM_OUT_GPIO_Port, ALARM_OUT_Pin,
-                      (status != 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    SensorApp_ControlFa66(status);
 
     length = snprintf((char *)s_report_buffer, sizeof(s_report_buffer),
-                      "%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%u\r\n",
+                      "%lu,%.4f,%.4f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%u,%lu,%lu\r\n",
                       (unsigned long)now,
                       (double)s_sensor_data.attitude.acc_g[0],
                       (double)s_sensor_data.attitude.acc_g[1],
@@ -119,7 +192,9 @@ void SensorApp_Process(void)
                       (double)s_sensor_data.attitude.angle_deg[0],
                       (double)s_sensor_data.attitude.angle_deg[1],
                       (double)s_sensor_data.attitude.angle_deg[2],
-                      (unsigned int)status);
+                      (unsigned int)status,
+                      (unsigned long)s_iwt603_rx_bytes,
+                      (unsigned long)s_iwt603_uart_errors);
     if ((length > 0) && ((size_t)length < sizeof(s_report_buffer)))
     {
       (void)HAL_UART_Transmit(&huart1, s_report_buffer, (uint16_t)length, 100U);

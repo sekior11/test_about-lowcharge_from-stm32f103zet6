@@ -63,6 +63,23 @@ void Error_Handler(void);
 /* USER CODE BEGIN Private defines */
 #define ALARM_OUT_Pin GPIO_PIN_5
 #define ALARM_OUT_GPIO_Port GPIOB
+
+/* FA66 RS485 (Modbus RTU) 接口定义 */
+#define RS485_DE_Pin        GPIO_PIN_0
+#define RS485_DE_GPIO_Port  GPIOB
+#ifndef FA66_USART_BAUDRATE
+#define FA66_USART_BAUDRATE 9600U
+#endif
+/* FA66 由继电器供电: 超阈值吸合上电, 稳态后读取, 滞回后断电 */
+#ifndef FA66_POWER_STABILIZE_MS
+#define FA66_POWER_STABILIZE_MS  2000U
+#endif
+#ifndef FA66_READ_PERIOD_MS
+#define FA66_READ_PERIOD_MS      500U
+#endif
+#ifndef FA66_ALARM_CLEAR_HOLD_MS
+#define FA66_ALARM_CLEAR_HOLD_MS 3000U
+#endif
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
