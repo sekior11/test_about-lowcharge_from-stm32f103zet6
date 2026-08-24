@@ -52,7 +52,8 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+void MX_RTC_Init(void);
+void RTC_Alarm_SetNext(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -94,6 +95,7 @@ int main(void)
   MX_USART3_UART_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  MX_RTC_Init();                            /* 启用 RTC + 5Hz(200ms) 周期唤醒 */
   SensorApp_Init();
 
   /* 功耗优化: 释放 JTAG(保留 SWD 调试), 将 PA15/PB3/PB4 设为模拟输入降低漏电 */
@@ -121,7 +123,28 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     SensorApp_Process();
-    __WFI();    /* 进入休眠, 由 1ms SysTick / USART / DMA 中断唤醒, 空闲期间 CPU 停转省电 */
+
+    if (SensorApp_IsAlarmSessionActive() != 0U)
+    {
+      /* 报警会话期(FA66 上电约5s): 保持 Sleep 连续处理, 不进 STOP,
+         以保证 FA66/USART2/USART3 时钟始终可用 */
+      __WFI();
+    }
+    else
+    {
+      /* 常态: 进 STOP, 由 RTC Alarm(EXTI17) 每 200ms 唤醒 */
+      __HAL_PWR_CLEAR_FLAG(PWR_FLAG_WU);
+      /* 清 RTC Alarm 标志 + EXTI17 挂起位(裸寄存器, 本项目无 hrtc 句柄):
+         否则标志一直挂起, EXTI17 立即再触发, 进 STOP 等于 busy 唤醒不省电 */
+      while ((RTC->CRL & RTC_CRL_RTOFF) == 0U) {}          /* 等 RTC 写不忙 */
+      RTC->CRL &= (uint16_t)~RTC_CRL_ALRF;                 /* 清报警标志 */
+      EXTI->PR = (1U << 17U);                              /* 清 EXTI17 挂起 */
+      RTC_Alarm_SetNext();                          /* 重设下一次 200ms 闹钟 */
+      HAL_PWR_EnterSTOPMode(PWR_MAINREGULATOR_ON, PWR_STOPENTRY_WFI);
+      /* ---- 唤醒后从此处继续: 必须先恢复时钟树与外设 ---- */
+      SystemClock_Config();                 /* 恢复 72MHz (否则串口波特率错乱) */
+      SensorApp_RestartIwt603Dma();         /* 重启 USART3+DMA 接收 */
+    }
   }
   /* USER CODE END 3 */
 }
@@ -166,7 +189,62 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void RTC_Alarm_SetNext(void)
+{
+  /* 设置下一次 RTC Alarm = 当前计数器 +1 (F1 RTC 每 tick 200ms 一次) */
+  uint32_t cnt = (((uint32_t)RTC->CNTH << 16U) | RTC->CNTL) + 1U;
+  RTC->CRL |= RTC_CRL_CNF;                  /* 进入配置模式 */
+  RTC->ALRL = (uint16_t)(cnt & 0xFFFFU);
+  RTC->ALRH = (uint16_t)(cnt >> 16U);
+  RTC->CRL &= ~RTC_CRL_CNF;                 /* 退出配置模式 */
+  while ((RTC->CRL & RTC_CRL_RTOFF) == 0U)  /* 等待写完成 */
+  {
+  }
+}
 
+void MX_RTC_Init(void)
+{
+  /* 1) 使能电源/备份域访问/LSI 时钟 */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  HAL_PWR_EnableBkUpAccess();
+  __HAL_RCC_BKP_CLK_ENABLE();
+  __HAL_RCC_LSI_ENABLE();
+  while (__HAL_RCC_GET_FLAG(RCC_FLAG_LSIRDY) == RESET)
+  {
+  }
+
+  /* 2) 选择 LSI 作为 RTC 时钟并开启 (写备份域 BDCR) */
+  RCC->BDCR &= ~((uint32_t)0x00000300U);    /* 清 RTCSEL */
+  RCC->BDCR |=  (uint32_t)0x00000200U;      /* 选 LSI */
+  RCC->BDCR |=  (uint32_t)0x00008000U;      /* RTCEN (bit15) */
+
+  /* 3) 配置预分频: LSI 40kHz / (7999+1) = 5Hz => 每 tick 200ms */
+  while ((RTC->CRL & RTC_CRL_RTOFF) == 0U)
+  {
+  }
+  RTC->CRL |= RTC_CRL_CNF;
+  RTC->PRLL = 7999U;
+  RTC->PRLH = 0U;
+  RTC->CRL &= ~RTC_CRL_CNF;
+  while ((RTC->CRL & RTC_CRL_RTOFF) == 0U)
+  {
+  }
+
+  /* 4) 使能 Alarm 中断 + EXTI 线17 上升沿 + NVIC */
+  RTC->CRH |= RTC_CRH_ALRIE;
+  EXTI->IMR |= (1U << 17U);
+  EXTI->RTSR |= (1U << 17U);
+  HAL_NVIC_SetPriority(RTC_IRQn, 0U, 0U);
+  HAL_NVIC_EnableIRQ(RTC_IRQn);
+
+  /* 5) 设置首次 Alarm = CNT+1 */
+  RTC_Alarm_SetNext();
+
+  /* 清残留报警/挂起标志, 避免上电后首次进 STOP 立即误唤醒 */
+  while ((RTC->CRL & RTC_CRL_RTOFF) == 0U) {}
+  RTC->CRL &= (uint16_t)~RTC_CRL_ALRF;
+  EXTI->PR = (1U << 17U);
+}
 /* USER CODE END 4 */
 
 /**

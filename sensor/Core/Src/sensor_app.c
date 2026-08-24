@@ -18,6 +18,11 @@ static volatile uint32_t s_iwt603_rx_bytes;
 static volatile uint32_t s_iwt603_uart_errors;
 static uint32_t s_iwt603_valid_updates;
 
+/* 虚拟时间基准: STOP 下 SysTick 冻结, 改用 RTC 计数器(每 tick 200ms)推导 ms */
+static uint32_t s_virtual_ms;
+static uint32_t s_last_rtc_cnt;
+static uint8_t  s_rtc_base_inited;   /* 0=尚未建立首次基准 */
+
 /* FA66 报警会话状态机: 超阈值->继电器吸合->FA66 上电->读毛重; 滞回->断电 */
 static FA66_Data_t s_fa66_data;
 static uint8_t s_fa66_relay_on;       /* 继电器(FA66 电源)是否吸合 */
@@ -49,6 +54,23 @@ static float SensorApp_Sqrt(float value)//平方根
   return estimate;
 }
 
+uint32_t SensorApp_GetVirtualMs(void)
+{
+  /* STOP 下 SysTick 冻结, 时间基准改用 RTC 计数器(预分频 5Hz, 每 tick 200ms) */
+  uint32_t cnt = (((uint32_t)RTC->CNTH << 16U) | RTC->CNTL);
+  if (s_rtc_base_inited == 0U)
+  {
+    s_last_rtc_cnt = cnt;          /* 首次建立基准, 不累加 */
+    s_rtc_base_inited = 1U;
+  }
+  else if (cnt != s_last_rtc_cnt)
+  {
+    s_virtual_ms += (cnt - s_last_rtc_cnt) * 200U;   /* 无符号减法自动处理回绕 */
+    s_last_rtc_cnt = cnt;
+  }
+  return s_virtual_ms;
+}
+
 static void SensorApp_ProcessIwt603Bytes(const uint8_t *data, uint16_t length)
 {
   uint16_t i;
@@ -73,11 +95,16 @@ static void SensorApp_StartIwt603Dma(void)//启动DMA接收
 void SensorApp_Init(void)//初始化传感器应用
 {
   IWT603_Init(&huart3);
-  s_last_report_tick = HAL_GetTick();
+  s_virtual_ms = 0U;
+  s_last_rtc_cnt = 0U;
+  s_rtc_base_inited = 0U;
+  s_last_report_tick = 0U;
   s_last_iwt603_tick = 0U;
   s_iwt603_rx_bytes = 0U;
   s_iwt603_uart_errors = 0U;
   s_iwt603_valid_updates = 0U;
+  /* 修漏洞: 初始未报警, 主动关闭 USART2 时钟(原逻辑走不到), 省常态漏电 */
+  __HAL_RCC_USART2_CLK_DISABLE();
   SensorApp_StartIwt603Dma();
 }
 
@@ -86,7 +113,7 @@ void SensorApp_Init(void)//初始化传感器应用
    仅在报警会话期间开启 USART2 时钟, 会话结束关闭以省电。 */
 static void SensorApp_ControlFa66(uint8_t alarm_active)
 {
-  uint32_t now = HAL_GetTick();
+  uint32_t now = SensorApp_GetVirtualMs();
 
   if (alarm_active != 0U)
   {
@@ -161,7 +188,7 @@ void SensorApp_Process(void)
     }
   }
 
-  now = HAL_GetTick();
+  now = SensorApp_GetVirtualMs();
   if ((now - s_last_report_tick) >= SENSOR_APP_REPORT_PERIOD_MS)
   {
     int length;
@@ -205,6 +232,17 @@ void SensorApp_Process(void)
 const SensorApp_Data_t *SensorApp_GetData(void)
 {
   return &s_sensor_data;
+}
+
+uint8_t SensorApp_IsAlarmSessionActive(void)
+{
+  return s_fa66_relay_on;
+}
+
+void SensorApp_RestartIwt603Dma(void)
+{
+  (void)HAL_UART_DMAStop(&huart3);
+  SensorApp_StartIwt603Dma();
 }
 
 void HAL_UART_RxHalfCpltCallback(UART_HandleTypeDef *huart)

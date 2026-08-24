@@ -246,4 +246,19 @@ void USART3_IRQHandler(void)
 /* USER CODE BEGIN 1 */
 /* 说明：USART1/USART3/DMA1_Channel3 中断服务函数已由上方 CubeMX 生成区定义，
    旧版在此处手写的三个重复 IRQHandler 已删除（重复定义编译错误）。 */
+
+/**
+  * @brief  RTC 全局中断 (Alarm 经 EXTI 线17 唤醒 STOP 模式)
+  *         必须实现: 否则启动文件弱默认死循环, 首次报警即挂死 MCU。
+  *         此处仅清标志, 真正的时钟恢复/重设 Alarm 在主循环唤醒后处理。
+  */
+void RTC_IRQHandler(void)
+{
+  if ((RTC->CRL & RTC_CRL_ALRF) != 0U)
+  {
+    while ((RTC->CRL & RTC_CRL_RTOFF) == 0U) {}   /* 等 RTC 写不忙 */
+    RTC->CRL &= (uint16_t)~RTC_CRL_ALRF;          /* 清 RTC Alarm 标志 */
+  }
+  EXTI->PR = (1U << 17U);                         /* 清 EXTI17 挂起位 */
+}
 /* USER CODE END 1 */

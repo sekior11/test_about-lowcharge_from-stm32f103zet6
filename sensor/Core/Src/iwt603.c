@@ -58,7 +58,7 @@ static void IWT603_ParseFrame(const uint8_t *frame)
     default:
       return;
   }
-  s_data.update_tick = HAL_GetTick();
+  s_data.update_tick++;                 /* 自增帧序号(STOP 下 HAL_GetTick 冻结, 改用计数去重) */
   s_data.valid = 1U;
 }
 
