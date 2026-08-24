@@ -242,6 +242,10 @@ uint8_t SensorApp_IsAlarmSessionActive(void)
 void SensorApp_RestartIwt603Dma(void)
 {
   (void)HAL_UART_DMAStop(&huart3);
+  /* STOP 唤醒后重武装 DMA 前先清一次溢出标志: 唤醒窗口内(恢复时钟到重启动之间
+     约 1~2ms) IWT603(921600)持续广播, 字节会填满 USART 移位寄存器触发 ORE,
+     若不清除会导致 uart_errors 每周期累加。清掉挂起的 ORE 可消除该计数。 */
+  __HAL_UART_CLEAR_OREFLAG(&huart3);
   SensorApp_StartIwt603Dma();
 }
 
